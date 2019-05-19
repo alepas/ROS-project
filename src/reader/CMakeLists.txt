@@ -13,6 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   message_generation
   message_filters
+  dynamic_reconfigure
 )
 
 ## System dependencies are found with CMake's conventions
@@ -89,10 +90,9 @@ generate_messages(
 ##     and list every .cfg file to be processed
 
 ## Generate dynamic reconfigure parameters in the 'cfg' folder
-# generate_dynamic_reconfigure_options(
-#   cfg/DynReconf1.cfg
-#   cfg/DynReconf2.cfg
-# )
+generate_dynamic_reconfigure_options(
+   cfg/algorithm_param.cfg
+)
 
 ###################################
 ## catkin specific configuration ##
@@ -202,3 +202,4 @@ include_directories(
 
 add_executable(reader src/reader.cpp)
 target_link_libraries(reader ${catkin_LIBRARIES})
+add_dependencies(reader ${PROJECT_NAME}_gencfg)
