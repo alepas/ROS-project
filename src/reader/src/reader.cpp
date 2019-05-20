@@ -7,6 +7,7 @@
 #include "project/algorithm_paramConfig.h"
 
 using namespace message_filters;
+bool globalIsDDK;
 
 void differential_drive_kinematics(const reader::floatStamped::ConstPtr& leftSpeed, 
                                    const reader::floatStamped::ConstPtr& rightSpeed, 
