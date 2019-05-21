@@ -1,23 +1,77 @@
 #include "ros/ros.h"
-#include "reader/floatStamped.h"
+#include "project/floatStamped.h"
 #include "message_filters/subscriber.h"
 #include "message_filters/synchronizer.h"
 #include "message_filters/sync_policies/approximate_time.h"
 #include "dynamic_reconfigure/server.h"
 #include "project/algorithm_paramConfig.h"
+#include "math.h"
+#include "tf/transform_broadcaster.h"
+#include "nav_msgs/Odometry.h"
 
 using namespace message_filters;
-bool globalIsDDK;
 
-void differential_drive_kinematics(const reader::floatStamped::ConstPtr& leftSpeed, 
-                                   const reader::floatStamped::ConstPtr& rightSpeed, 
-                                   const reader::floatStamped::ConstPtr& steer){
-    //kinematics algorithm
+bool globalIsDDK;
+float base = 1.3;
+int steering_factor = 18;
+float dist = 1.765;
+
+ros::Time tk(0.0);
+double xk = 0.0;
+double yk = 0.0;
+double tetak = 0.0;
+
+class Variables {
+    public:
+        double x;
+        double y;
+        double teta;
+        ros::Time time;
+        double v;
+        double omega;
+};
+
+Variables differential_drive_kinematics(const project::floatStamped::ConstPtr& leftSpeed, 
+                                   const project::floatStamped::ConstPtr& rightSpeed, 
+                                   const project::floatStamped::ConstPtr& steer){
+    //constants computation
+    double omega = (rightSpeed->data - leftSpeed->data) / base;
+    double radius = (base / 2) * (rightSpeed->data + leftSpeed->data) / (rightSpeed->data - leftSpeed->data);
+    double linVel = omega * radius;
+
+    //delta computation
+    ros::Time tk1 = steer->header.stamp;
+    double delta;
+
+    //using only the nanoseconds as delta for the first data
+    if (tk.sec == 0) {
+        delta = tk1.nsec;
+    } else {
+        delta = (tk1 - tk).toNSec();
+    }
+
+    //conversion from nanoseconds to seconds
+    delta /= 1000000000;
+    
+    //new pose computation using 2nd order Runge-Kutta integration
+    xk = xk + linVel * delta * cos(tetak + omega * delta / 2);
+    yk = yk + linVel * delta * sin(tetak + omega * delta / 2);
+    tetak = tetak + omega * delta;
+    tk = tk1;
+
+    Variables vars;
+    vars.x = xk;
+    vars.y = yk;
+    vars.teta = tetak;
+    vars.time = tk;
+    vars.v = linVel;
+    vars.omega = omega;
+    return vars;
 }
 
-void ackerman_model(const reader::floatStamped::ConstPtr& leftSpeed, 
-                    const reader::floatStamped::ConstPtr& rightSpeed,
-                    const reader::floatStamped::ConstPtr& steer){
+Variables ackerman_model(const project::floatStamped::ConstPtr& leftSpeed, 
+                    const project::floatStamped::ConstPtr& rightSpeed,
+                    const project::floatStamped::ConstPtr& steer){
     //ackerman algorithm
 }
 
@@ -27,15 +81,55 @@ void getIsDDK(project::algorithm_paramConfig &config, uint32_t level){
     globalIsDDK = config.isDDK;
 }
 
+void publishing_func(Variables vars) {
+    ros::NodeHandle r;
+    ros::Publisher publisher = r.advertise<nav_msgs::Odometry>("odom", 100);
+    tf::TransformBroadcaster broadcaster;
+
+    //publishing tf
+    geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromYaw(vars.teta);
+    geometry_msgs::TransformStamped odom_trans;
+    odom_trans.header.stamp = vars.time;
+    odom_trans.header.frame_id = "odom";
+    odom_trans.child_frame_id = "base_link";
+
+    odom_trans.transform.translation.x = vars.x;
+    odom_trans.transform.translation.y = vars.y;
+    odom_trans.transform.translation.z = 0.0;
+    odom_trans.transform.rotation = odom_quat;
+    broadcaster.sendTransform(odom_trans);
+
+    //publishing on odom topic
+    nav_msgs::Odometry odom;
+    odom.header.stamp = vars.time;
+    odom.header.frame_id = "odom";
+    odom.pose.pose.position.x = vars.x;
+    odom.pose.pose.position.y = vars.y;
+    odom.pose.pose.position.z = 0.0;
+    odom.pose.pose.orientation = odom_quat;
+
+    odom.child_frame_id = "base_link";
+    odom.twist.twist.linear.x = vars.v * cos(vars.teta);
+    odom.twist.twist.linear.y = vars.v * sin(vars.teta);
+    odom.twist.twist.angular.z = vars.omega;
+    
+    printf("sto pubblicando\n");
+    publisher.publish(odom);
+}
+
 /* Sync callback: it the global var is set to True the DDK will be evaluate; if it is 
    set to False odometry will be done via Ackerman Mode*/  
 void compute_algorithm(const project::floatStamped::ConstPtr& leftSpeed, 
-                       const project::floatStamped::ConstPtr& rightSpeed, c
-                       onst project::floatStamped::ConstPtr& steer){
-    if(globalIsDDK){
-	differential_drive_kinematics(leftSpeed, rightSpeed, steer);
+                       const project::floatStamped::ConstPtr& rightSpeed,
+                       const project::floatStamped::ConstPtr& steer) {
+    Variables vars;
+    if(globalIsDDK) {
+	    vars = differential_drive_kinematics(leftSpeed, rightSpeed, steer);
+    } else {
+        vars = ackerman_model(leftSpeed, rightSpeed, steer);
     }
-    else{ackerman_model(leftSpeed, rightSpeed, steer);}
+
+    publishing_func(vars);
 }
 
 int main(int argc, char *argv[])
