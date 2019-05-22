@@ -11,21 +11,23 @@
 
 using namespace message_filters;
 
+ros::Publisher publisher;
+
 bool globalIsDDK;
-float base = 1.3;
+double base = 1.3;
 int steering_factor = 18;
 float dist = 1.765;
 
 ros::Time tk(0.0);
 double xk = 0.0;
 double yk = 0.0;
-double tetak = 0.0;
+double thetak = 0.0;
 
 class Variables {
     public:
         double x;
         double y;
-        double teta;
+        double theta;
         ros::Time time;
         double v;
         double omega;
@@ -36,7 +38,12 @@ Variables differential_drive_kinematics(const project::floatStamped::ConstPtr& l
                                    const project::floatStamped::ConstPtr& steer){
     //constants computation
     double omega = (rightSpeed->data - leftSpeed->data) / base;
-    double radius = (base / 2) * (rightSpeed->data + leftSpeed->data) / (rightSpeed->data - leftSpeed->data);
+    double radius;
+    if(rightSpeed->data - leftSpeed->data == 0.0){
+        radius = 0.0;
+    }else{
+        radius = (base / 2) * (rightSpeed->data + leftSpeed->data) / (rightSpeed->data - leftSpeed->data);
+    }
     double linVel = omega * radius;
 
     //delta computation
@@ -52,17 +59,17 @@ Variables differential_drive_kinematics(const project::floatStamped::ConstPtr& l
 
     //conversion from nanoseconds to seconds
     delta /= 1000000000;
-    
+
     //new pose computation using 2nd order Runge-Kutta integration
-    xk = xk + linVel * delta * cos(tetak + omega * delta / 2);
-    yk = yk + linVel * delta * sin(tetak + omega * delta / 2);
-    tetak = tetak + omega * delta;
+    xk = xk + linVel * delta * cos(thetak + omega * delta / 2);
+    yk = yk + linVel * delta * sin(thetak + omega * delta / 2);
+    thetak = thetak + omega * delta;
     tk = tk1;
 
     Variables vars;
     vars.x = xk;
     vars.y = yk;
-    vars.teta = tetak;
+    vars.theta = thetak;
     vars.time = tk;
     vars.v = linVel;
     vars.omega = omega;
@@ -79,15 +86,15 @@ Variables ackerman_model(const project::floatStamped::ConstPtr& leftSpeed,
    isDDK param*/
 void getIsDDK(project::algorithm_paramConfig &config, uint32_t level){
     globalIsDDK = config.isDDK;
+    xk = config.x;
+    yk = config.y;
 }
 
 void publishing_func(Variables vars) {
-    ros::NodeHandle r;
-    ros::Publisher publisher = r.advertise<nav_msgs::Odometry>("odom", 100);
     tf::TransformBroadcaster broadcaster;
 
     //publishing tf
-    geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromYaw(vars.teta);
+    geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromYaw(vars.theta);
     geometry_msgs::TransformStamped odom_trans;
     odom_trans.header.stamp = vars.time;
     odom_trans.header.frame_id = "odom";
@@ -109,11 +116,10 @@ void publishing_func(Variables vars) {
     odom.pose.pose.orientation = odom_quat;
 
     odom.child_frame_id = "base_link";
-    odom.twist.twist.linear.x = vars.v * cos(vars.teta);
-    odom.twist.twist.linear.y = vars.v * sin(vars.teta);
+    odom.twist.twist.linear.x = vars.v * cos(vars.theta);
+    odom.twist.twist.linear.y = vars.v * sin(vars.theta);
     odom.twist.twist.angular.z = vars.omega;
     
-    printf("sto pubblicando\n");
     publisher.publish(odom);
 }
 
@@ -135,6 +141,10 @@ void compute_algorithm(const project::floatStamped::ConstPtr& leftSpeed,
 int main(int argc, char *argv[])
 {
     ros::init(argc, argv, "reader");
+
+    ros::NodeHandle r;
+    publisher = r.advertise<nav_msgs::Odometry>("odom", 100);
+
     ros::NodeHandle n;
     
 
