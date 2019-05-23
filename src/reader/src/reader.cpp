@@ -1,5 +1,6 @@
 #include "ros/ros.h"
 #include "project/floatStamped.h"
+#include "project/custom_message.h"
 #include "message_filters/subscriber.h"
 #include "message_filters/synchronizer.h"
 #include "message_filters/sync_policies/approximate_time.h"
@@ -12,6 +13,7 @@
 using namespace message_filters;
 
 ros::Publisher publisher;
+ros::Publisher customPublisher;
 
 bool globalIsDDK;
 double base = 1.3;
@@ -33,20 +35,8 @@ class Variables {
         double omega;
 };
 
-Variables differential_drive_kinematics(const project::floatStamped::ConstPtr& leftSpeed, 
-                                   const project::floatStamped::ConstPtr& rightSpeed, 
-                                   const project::floatStamped::ConstPtr& steer){
-    //constants computation
-    double omega = (rightSpeed->data - leftSpeed->data) / base;
-    double radius;
-    if(rightSpeed->data - leftSpeed->data == 0.0){
-        radius = 0.0;
-    }else{
-        radius = (base / 2) * (rightSpeed->data + leftSpeed->data) / (rightSpeed->data - leftSpeed->data);
-    }
-    double linVel = omega * radius;
-
-    //delta computation
+Variables pose_evaluation(double omega, double radius, double linVel, const project::floatStamped::ConstPtr& steer){
+     //delta computation
     ros::Time tk1 = steer->header.stamp;
     double delta;
 
@@ -75,11 +65,35 @@ Variables differential_drive_kinematics(const project::floatStamped::ConstPtr& l
     vars.omega = omega;
     return vars;
 }
+Variables differential_drive_kinematics(const project::floatStamped::ConstPtr& leftSpeed, 
+                                   const project::floatStamped::ConstPtr& rightSpeed, 
+                                   const project::floatStamped::ConstPtr& steer){
+    //constants computation
+    double omega = (rightSpeed->data - leftSpeed->data) / base;
+    double radius;
+    if(rightSpeed->data - leftSpeed->data == 0.0){
+        radius = 0.0;
+    }else{
+        radius = (base / 2) * (rightSpeed->data + leftSpeed->data) / (rightSpeed->data - leftSpeed->data);
+    }
+    double linVel = omega * radius;
+
+    return pose_evaluation(omega, radius, linVel, steer);
+   
+}
 
 Variables ackerman_model(const project::floatStamped::ConstPtr& leftSpeed, 
                     const project::floatStamped::ConstPtr& rightSpeed,
                     const project::floatStamped::ConstPtr& steer){
-    //ackerman algorithm
+    double alpha = steer->data * steering_factor;      //?? TODO              
+    double radius = dist / tan(alpha);
+    double rearSpeed = (leftSpeed->data + rightSpeed->data) / 2;
+
+    double omega = rearSpeed * 1 / radius;
+    double frontSpeed = omega * dist / sin(alpha);
+
+    return pose_evaluation(omega, radius, frontSpeed, steer);
+
 }
 
 /* Dynamic_reconfigure callback, it assigns to a global variable the modified value of 
@@ -121,6 +135,29 @@ void publishing_func(Variables vars) {
     odom.twist.twist.angular.z = vars.omega;
     
     publisher.publish(odom);
+
+    project::custom_message msg;
+    msg.stamp = vars.time;
+    msg.frameId = "odom";
+    msg.x = vars.x;
+    msg.y = vars.y;
+    msg.z = 0.0;
+    msg.xTwist = odom_quat.x;
+    msg.yTwist = odom_quat.y;
+    msg.zTwist = odom_quat.z;
+    msg.wTwist = odom_quat.w;
+    msg.childFrameID = "base_link";
+    msg.xLin = odom.twist.twist.linear.x;
+    msg.yLin = odom.twist.twist.linear.y;
+    msg.angLin = vars.omega;
+
+    if(globalIsDDK){
+        msg.type = "Differential dirve kinematics";
+    }else{
+        msg.type = "Ackerman Model";
+    }
+
+    customPublisher.publish(msg);
 }
 
 /* Sync callback: it the global var is set to True the DDK will be evaluate; if it is 
@@ -136,6 +173,7 @@ void compute_algorithm(const project::floatStamped::ConstPtr& leftSpeed,
     }
 
     publishing_func(vars);
+
 }
 
 int main(int argc, char *argv[])
@@ -143,7 +181,9 @@ int main(int argc, char *argv[])
     ros::init(argc, argv, "reader");
 
     ros::NodeHandle r;
-    publisher = r.advertise<nav_msgs::Odometry>("odom", 100);
+    ros::NodeHandle q;
+    publisher = r.advertise<nav_msgs::Odometry>("odom", 1000);
+    customPublisher = q.advertise<project::custom_message>("custom_message", 1000);
 
     ros::NodeHandle n;
     
