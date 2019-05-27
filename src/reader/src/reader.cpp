@@ -99,7 +99,7 @@ Variables ackerman_model(const project::floatStamped::ConstPtr& leftSpeed,
 
 /* Dynamic_reconfigure callback, it assigns to a global variable the modified value of 
    isDDK param*/
-void getIsDDK(project::algorithm_paramConfig &config, uint32_t level){
+void reconfigure(project::algorithm_paramConfig &config, uint32_t level){
     globalIsDDK = config.isDDK;
     xk = config.x;
     yk = config.y;
@@ -188,7 +188,7 @@ int main(int argc, char *argv[])
 
     dynamic_reconfigure::Server<project::algorithm_paramConfig> server;
     dynamic_reconfigure::Server<project::algorithm_paramConfig>::CallbackType f;
-    f = boost::bind(&getIsDDK, _1, _2);
+    f = boost::bind(&reconfigure, _1, _2);
     server.setCallback(f);
 
 
