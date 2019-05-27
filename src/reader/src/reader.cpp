@@ -65,6 +65,7 @@ Variables pose_evaluation(double omega, double radius, double linVel, const proj
     vars.omega = omega;
     return vars;
 }
+
 Variables differential_drive_kinematics(const project::floatStamped::ConstPtr& leftSpeed, 
                                    const project::floatStamped::ConstPtr& rightSpeed, 
                                    const project::floatStamped::ConstPtr& steer){
@@ -85,7 +86,7 @@ Variables differential_drive_kinematics(const project::floatStamped::ConstPtr& l
 Variables ackerman_model(const project::floatStamped::ConstPtr& leftSpeed, 
                     const project::floatStamped::ConstPtr& rightSpeed,
                     const project::floatStamped::ConstPtr& steer){
-    double alpha = steer->data * steering_factor;      //?? TODO              
+    double alpha = steer->data / steering_factor;
     double radius = dist / tan(alpha);
     double rearSpeed = (leftSpeed->data + rightSpeed->data) / 2;
 
@@ -105,20 +106,17 @@ void getIsDDK(project::algorithm_paramConfig &config, uint32_t level){
 }
 
 void publishing_func(Variables vars) {
-    tf::TransformBroadcaster broadcaster;
+    static tf::TransformBroadcaster broadcaster;
+
+    tf::Transform transform;
+    transform.setOrigin(tf::Vector3(vars.x, vars.y, 0));
+    tf::Quaternion q;
+    q.setRPY(0, 0, vars.theta);
+    transform.setRotation(q);
 
     //publishing tf
     geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromYaw(vars.theta);
-    geometry_msgs::TransformStamped odom_trans;
-    odom_trans.header.stamp = vars.time;
-    odom_trans.header.frame_id = "odom";
-    odom_trans.child_frame_id = "base_link";
-
-    odom_trans.transform.translation.x = vars.x;
-    odom_trans.transform.translation.y = vars.y;
-    odom_trans.transform.translation.z = 0.0;
-    odom_trans.transform.rotation = odom_quat;
-    broadcaster.sendTransform(odom_trans);
+    broadcaster.sendTransform(tf::StampedTransform(transform, vars.time, "odom", "base_link"));
 
     //publishing on odom topic
     nav_msgs::Odometry odom;
@@ -135,7 +133,7 @@ void publishing_func(Variables vars) {
     odom.twist.twist.angular.z = vars.omega;
     
     publisher.publish(odom);
-
+   
     project::custom_message msg;
     msg.stamp = vars.time;
     msg.frameId = "odom";
